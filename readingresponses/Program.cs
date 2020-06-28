@@ -1,11 +1,14 @@
 ﻿using cosmosdbquery;
 using Microsoft.Azure.Cosmos;
 using Microsoft.IdentityModel.Clients.ActiveDirectory;
+using Newtonsoft.Json;
 using Renci.SshNet;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -103,9 +106,23 @@ namespace readingresponses
             }
         }
 
-        public static void SendSignalviaHttp(signal signalObject)
+        public static async Task SendSignalviaHttpAsync(signal signalObject)
         {
+            string clientId = "";
+            string clientSecret = "";
+            string resource = "";
+            string token = GetOAuthTokenFromAAD(clientId, clientSecret, resource).Result;
+            HttpClient client = new HttpClient();
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var json = JsonConvert.SerializeObject(signalObject);
+            var data = new StringContent(json, Encoding.UTF8, "application/json");
+
+            var url = "";
          
+            var response = await client.PostAsync(url, data);
+
+            string result = response.Content.ReadAsStringAsync().Result;
+            Console.WriteLine(result);
         }
 
         static void DownloadFileFromInformatica()
