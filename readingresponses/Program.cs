@@ -1,5 +1,6 @@
 ﻿using cosmosdbquery;
 using Microsoft.Azure.Cosmos;
+using Microsoft.IdentityModel.Clients.ActiveDirectory;
 using Renci.SshNet;
 using System;
 using System.Collections.Generic;
@@ -121,8 +122,24 @@ namespace readingresponses
                 sftp.Disconnect();
             }
         }
-          
-       static getmainmail FromCsv(string csvLine)
+        public static async Task<string> GetOAuthTokenFromAAD(string clientId, string clientSecret, string resource)
+        {
+            ClientCredential clientCredential = new ClientCredential(clientId, clientSecret);
+
+            AuthenticationContext authenticationContext = new AuthenticationContext("");
+
+            Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationResult result = await authenticationContext.AcquireTokenAsync(resource, clientCredential);
+
+            if (result == null)
+            {
+                throw new InvalidOperationException("Failed to obtain the JWT token");
+            }
+
+            return result.AccessToken;
+        }
+    
+
+static getmainmail FromCsv(string csvLine)
         {
             string[] array = csvLine.Split(',');
             getmainmail getmainmailObj = new getmainmail();
