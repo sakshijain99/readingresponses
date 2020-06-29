@@ -5,12 +5,15 @@ using Newtonsoft.Json;
 using Renci.SshNet;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.Azure.Services.AppAuthentication;
 
 namespace readingresponses
 {
@@ -75,11 +78,11 @@ namespace readingresponses
             p.containermain = pobject.containermain;
             p.containerretry = pobject.containerretry;
             List<getmainmail> responses = File.ReadAllLines(@"C:\Users\Lenovo\Documents\emailvalidation_Processed.csv").Skip(1).Select(v => FromCsv(v)).ToList();
-            
+
             foreach (var value in responses)
             {
                 value.Id = value.VerifyEmailResponse.VerifyEmailResult.ServiceResult.Email.Complete;
-                if (value.VerifyEmailResponse.VerifyEmailResult.ServiceStatus.StatusNbr != 220&& value.VerifyEmailResponse.VerifyEmailResult.ServiceStatus.StatusNbr!=270)
+                if (value.VerifyEmailResponse.VerifyEmailResult.ServiceStatus.StatusNbr != 220 && value.VerifyEmailResponse.VerifyEmailResult.ServiceStatus.StatusNbr != 270)
                 {
                     signal SignalObject = new signal();
                     Key keyobject = new Key();
@@ -90,7 +93,7 @@ namespace readingresponses
                     Attribute attributeobjectold = new Attribute();
                     Guid g = Guid.NewGuid();
                     SignalObject.correlationId = g.ToString();
-             
+
                     attributeobjectnew.key = "StatusCode.new";
                     attributeobjectnew.value = value.VerifyEmailResponse.VerifyEmailResult.ServiceStatus.StatusNbr.ToString();
                     attributeobjectold.key = "StatusCode.old";
@@ -100,7 +103,7 @@ namespace readingresponses
                     SignalObject.attributes = attributelist;
                     SignalObject.originatingSystemDate = lastModified;
                     SignalObject.internalProcessingDate = DateTime.UtcNow;
-                   // SendSignalviaHttp(SignalObject);
+                    await SendSignalviaHttpAsync(SignalObject);
                     await p.AddingAndDeleting(value);
                 }
             }
@@ -108,26 +111,25 @@ namespace readingresponses
 
         public static async Task SendSignalviaHttpAsync(signal signalObject)
         {
-            string clientId = "";
-            string clientSecret = "";
-            string resource = "";
-            string token = GetOAuthTokenFromAAD(clientId, clientSecret, resource).Result;
+            var token = new AzureServiceTokenProvider("RunAs=App;AppId=aa0c3919-10cc-41aa-b236-35329c72ce95;TenantId=72f988bf-86f1-41af-91ab-2d7cd011db47;CertificateThumbprint=624225424959582dc202a153b69aa7f85c90c57b;CertificateStoreLocation=LocalMachine");
+        var requiredtoken=  await token.GetAccessTokenAsync("https://activitystore-ppe.trafficmanager.net");
             HttpClient client = new HttpClient();
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", requiredtoken);
             var json = JsonConvert.SerializeObject(signalObject);
             var data = new StringContent(json, Encoding.UTF8, "application/json");
 
-            var url = "";
-         
-            var response = await client.PostAsync(url, data);
+            var signalurl = "https://activitystore-ppe.trafficmanager.net/signalacquisition-dev/api/v1/signal";
 
-            string result = response.Content.ReadAsStringAsync().Result;
+            var response = await client.PostAsync(signalurl, data);
+
+            string result = await response.Content.ReadAsStringAsync();
             Console.WriteLine(result);
         }
 
         static void DownloadFileFromInformatica()
         {
-            using (var sftp = new SftpClient("sftp.strikeiron.com", 22, "microsofttest","Ch@!jYmW"))
+            using (var sftp = new SftpClient("sftp.strikeiron.com", 22, "microsofttest", "Ch@!jYmW"))
             {
                 sftp.Connect();
 
@@ -139,24 +141,52 @@ namespace readingresponses
                 sftp.Disconnect();
             }
         }
-        public static async Task<string> GetOAuthTokenFromAAD(string clientId, string clientSecret, string resource)
+        public class Authorization
         {
-            ClientCredential clientCredential = new ClientCredential(clientId, clientSecret);
-
-            AuthenticationContext authenticationContext = new AuthenticationContext("");
-
-            Microsoft.IdentityModel.Clients.ActiveDirectory.AuthenticationResult result = await authenticationContext.AcquireTokenAsync(resource, clientCredential);
-
-            if (result == null)
+            public readonly string _tenantId;
+            public readonly string _clientId;
+            public readonly string _certificateThumbprint;
+           
+       
+            public Authorization(string tenantId, string clientId, string certificateThumbprint)
             {
-                throw new InvalidOperationException("Failed to obtain the JWT token");
+                _tenantId = tenantId;
+                _clientId = clientId;
+                _certificateThumbprint = certificateThumbprint;
+                
             }
 
-            return result.AccessToken;
-        }
-    
+            public async Task<string> GetAccessTokenAsync(string url)
+            {
+                 var authContext = new AuthenticationContext($"https://login.microsoftonline.com/72f988bf-86f1-41af-91ab-2d7cd011db47/oauth2/token"); 
 
-static getmainmail FromCsv(string csvLine)
+                return (await authContext.AcquireTokenAsync(url, GetCertificate(_clientId, _certificateThumbprint))).AccessToken;
+            }
+
+            private ClientAssertionCertificate GetCertificate(string clientId, string thumbprint)
+            {
+                var token = new AzureServiceTokenProvider("RunAs=App;AppId=aa0c3919-10cc-41aa-b236-35329c72ce95;TenantId=72f988bf-86f1-41af-91ab-2d7cd011db47; CertificateThumbprint=624225424959582dc202a153b69aa7f85c90c57b;CertificateStoreLocation=CurrentUser");
+                token.GetAccessTokenAsync("https://activitystore-ppe.trafficmanager.net");
+                var certificate = GetCertificateFromStore(thumbprint) ;
+                return new ClientAssertionCertificate(clientId, certificate);
+            }
+
+            private static X509Certificate2 GetCertificateFromStore(string thumbprint)
+            {
+                var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
+
+                store.Open(OpenFlags.ReadOnly);
+
+                var certificates = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, false);
+
+                store.Close();
+
+                return certificates[0];
+            }
+        }
+
+
+        static getmainmail FromCsv(string csvLine)
         {
             string[] array = csvLine.Split(',');
             getmainmail getmainmailObj = new getmainmail();
@@ -186,5 +216,6 @@ static getmainmail FromCsv(string csvLine)
             getmainmailObj.VerifyEmailResponse.VerifyEmailResult.ServiceResult.Email.DomainPart = array[12];
             return getmainmailObj;
         }
-        }
+    }
 }
+
