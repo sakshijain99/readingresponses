@@ -28,13 +28,18 @@ public class getretryemail
         public string partitionKey { get; set; }
         public object hashKey { get; set; }
         public DateTime timestamp { get; set; }
+        public DateTime processedtimestamp { get; set; }
+        public int counter = 0;// { get; set; }
     }
     public class getmainmail
     {
-        [JsonProperty(PropertyName = "id")]
-        public string Id { get; set; }
+        //[JsonProperty(PropertyName = "id")]
+       // public string Id { get; set; }
 
         public VerifyEmailResponse VerifyEmailResponse { get; set; }
+        public string id { get; set; }
+      
+        public string partitionKey { get; set; }
     }
     public  class VerifyEmailResponse
     {
@@ -123,57 +128,41 @@ public class getretryemail
           containermain = database.GetContainer("collection1");
             containerretry = database.GetContainer("mycollection");
         }
-        public async Task QueryItemsMainAsync()
+        
+        public async Task<bool> ItemExistsInMainCollection(string id)
         {
-            var sqlQueryText = "SELECT * FROM c";
-
-            QueryDefinition queryDefinition = new QueryDefinition(sqlQueryText);
-            FeedIterator<getmainmail> queryResultSetIterator = this.containermain.GetItemQueryIterator<getmainmail>(queryDefinition);
-            while (queryResultSetIterator.HasMoreResults)
-            {
-                FeedResponse<getmainmail> currentResultSet = await queryResultSetIterator.ReadNextAsync();
-                foreach (getmainmail family in currentResultSet)
-                {
-                   listmain.Add(family);
-                
-                }
-            }
-            //Console.WriteLine(listmain.Count);
-        }
-        public async Task ItemExistsInMainCollection(string id)
-        {
-            var sqlQueryText = $"SELECT * FROM c WHERE c.VerifyEmailResponse.VerifyEmailResult.ServiceResult.Email.Complete =\"{id}\" ";
+            var sqlQueryText = $"SELECT * FROM c WHERE c.id =\"{id}\" ";
           //  Console.WriteLine(sqlQueryText);
            // Console.ReadKey();
             QueryDefinition queryDefinition = new QueryDefinition(sqlQueryText);
             FeedIterator<getmainmail> queryResultSetIterator = this.containermain.GetItemQueryIterator<getmainmail>(queryDefinition);
-            while (queryResultSetIterator.HasMoreResults)
-            {
-                FeedResponse<getmainmail> currentResultSet = await queryResultSetIterator.ReadNextAsync();
-                foreach (getmainmail item in currentResultSet)
-                {
-                    mainquery.Add(item);
-
-                }
-            }
+            FeedResponse<getmainmail> currentResultSet = await queryResultSetIterator.ReadNextAsync();
+            if (currentResultSet.Count != 0)
+                return true;
+            else
+                return false;
         
              }
         public async Task QueryItemsRetryAsync()
         {
             var currentdatetime = DateTime.UtcNow;
             var updatedtime = currentdatetime.AddHours(-26);
-           
-            var sqlQueryText = $"SELECT * FROM c WHERE c.timestamp<\"{updatedtime.ToString("yyyy-MM-ddTHH\\:mm\\:ss.ffffffZ")}\" " ;
+
+            var sqlQueryText = $"SELECT * FROM c WHERE ((c.processedtimestamp<\"{updatedtime.ToString("yyyy-MM-ddTHH\\:mm\\:ss.ffffffZ")}\" " + "OR NOT IS_DEFINED(c.processedtimestamp))"+ "AND (c.counter<=3 OR NOT IS_DEFINED(c.counter)))";
            // Console.WriteLine(sqlQueryText);
             //Console.ReadKey();
             QueryDefinition queryDefinition = new QueryDefinition(sqlQueryText);
             FeedIterator<getretryemail> queryResultSetIterator = this.containerretry.GetItemQueryIterator<getretryemail>(queryDefinition);
+         
             while (queryResultSetIterator.HasMoreResults)
             {
                 FeedResponse<getretryemail> currentResultSet = await queryResultSetIterator.ReadNextAsync();
                 foreach (getretryemail item in currentResultSet)
                 {
+                    
                     listretry.Add(item);
+                    if (listretry.Count == 10)
+                        break;
               
                 }
             }
@@ -183,7 +172,7 @@ public class getretryemail
         {
             try
             {
-                ItemResponse<getmainmail> Response = await containermain.UpsertItemAsync<getmainmail>(obj);
+                ItemResponse<getmainmail> Response = await containermain.UpsertItemAsync<getmainmail>(obj,new PartitionKey(obj.id.Substring(0,2)));
                 Console.WriteLine("updated item in database with id: {0} \n", Response.Resource.VerifyEmailResponse.VerifyEmailResult.ServiceResult.Email.Complete);
                             }
             catch (Exception e)
@@ -240,55 +229,51 @@ public class getretryemail
         {
 
             await AddItemstoMainContainer(obj);
-            await searchRetry(obj.Id);
+            await searchRetry(obj.id);
             if (retrysearchlist.Count != 0)
             {
                 var item = retrysearchlist[0];
                 await DeleteItem(item.id, new PartitionKey(item.reasonCode));
             }
             else { Console.WriteLine("item not found"); }
-            
         }
 
         public async Task Readfromdb() {
-            mainquery.Clear();
+           
            
             await GetReference();
-            await QueryItemsMainAsync();
+        
             await QueryItemsRetryAsync();
            
             List<getretryemail> retrylist = new List<getretryemail>();
-            int i = 0;
+          
             foreach (var mail in listretry.ToList())
             {
-                i++;
-               await ItemExistsInMainCollection(mail.id);
-                if(mainquery.Count!=0)
-                 {  Console.WriteLine("item found");
-                   // Console.ReadKey();
-                    await DeleteItem(mail.id, new PartitionKey(mail.reasonCode));
-                }
-                else
-                {
-                    Console.WriteLine("item not found");
-                  //  Console.ReadKey();
-                    retrylist.Add(mail);
-                    mail.timestamp = DateTime.UtcNow;
-                   
-                    await UpdateItemstoRetryContainer(mail);
-                }
-                if (i >= 10)
-                    break;
+                mail.counter++;
+           
+                if (await ItemExistsInMainCollection(mail.id))
+
+                    {
+                        Console.WriteLine("item found");
+                        await DeleteItem(mail.id, new PartitionKey(mail.reasonCode));
+                    }
+                    else
+                    {
+                        Console.WriteLine("item not found");
+                        retrylist.Add(mail);
+                        mail.processedtimestamp = DateTime.UtcNow;
+
+                        await UpdateItemstoRetryContainer(mail);
+                    }
             }
                    
             WriteExcelDocument(retrylist);
-            SendToInformatica();
+            SendFileToInformatica();
         }
 
-        void SendToInformatica()
+        void SendFileToInformatica()
         {
             string filepath = @"C:\Users\Lenovo\Documents\emailvalidation.xlsx";
-            //Console.WriteLine("Create client Object");
             using (SftpClient sftpClient = new SftpClient("sftp.strikeiron.com", 22, "microsofttest", "Ch@!jYmW"))
             {
                 Console.WriteLine("Connect to server");
@@ -300,7 +285,7 @@ public class getretryemail
                     sftpClient.BufferSize = 1024;
                     sftpClient.UploadFile(fs, Path.GetFileName(filepath));
                 }
-
+                Console.WriteLine("file sent to informatica");
                 Console.ReadKey();
                 sftpClient.Dispose();
             }

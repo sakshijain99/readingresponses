@@ -81,12 +81,12 @@ namespace readingresponses
 
             foreach (var value in responses)
             {
-                value.Id = value.VerifyEmailResponse.VerifyEmailResult.ServiceResult.Email.Complete;
+                value.id = value.VerifyEmailResponse.VerifyEmailResult.ServiceResult.Email.Complete;
                 if (value.VerifyEmailResponse.VerifyEmailResult.ServiceStatus.StatusNbr != 220 && value.VerifyEmailResponse.VerifyEmailResult.ServiceStatus.StatusNbr != 270)
                 {
                     signal SignalObject = new signal();
                     Key keyobject = new Key();
-                    keyobject.value = value.Id;
+                    keyobject.value = value.id;
                     SignalObject.keys = keyobject;
                     List<Attribute> attributelist = new List<Attribute>();
                     Attribute attributeobjectnew = new Attribute();
@@ -103,6 +103,7 @@ namespace readingresponses
                     SignalObject.attributes = attributelist;
                     SignalObject.originatingSystemDate = lastModified;
                     SignalObject.internalProcessingDate = DateTime.UtcNow;
+                    value.partitionKey = value.id.Substring(0,2);
                     await SendSignalviaHttpAsync(SignalObject);
                     await p.AddingAndDeleting(value);
                 }
@@ -111,7 +112,7 @@ namespace readingresponses
 
         public static async Task SendSignalviaHttpAsync(signal signalObject)
         {
-            var token = new AzureServiceTokenProvider("RunAs=App;AppId=aa0c3919-10cc-41aa-b236-35329c72ce95;TenantId=72f988bf-86f1-41af-91ab-2d7cd011db47;CertificateThumbprint=624225424959582dc202a153b69aa7f85c90c57b;CertificateStoreLocation=LocalMachine");
+            var token = new AzureServiceTokenProvider("RunAs=App;AppId=aa0c3919-10cc-41aa-b236-35329c72ce95;TenantId=72f988bf-86f1-41af-91ab-2d7cd011db47;CertificateThumbprint=624225424959582dc202a153b69aa7f85c90c57b;CertificateStoreLocation=CurrentUser");
         var requiredtoken=  await token.GetAccessTokenAsync("https://activitystore-ppe.trafficmanager.net");
             HttpClient client = new HttpClient();
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
