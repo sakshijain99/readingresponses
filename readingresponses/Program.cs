@@ -34,9 +34,9 @@ namespace readingresponses
     public class signal
     {
         public string impactedEntity = "Contact";
-        public string signalType = "EmailValidationDataUpdate";
+        public string signalType = "EmailValidationStatusChange";
         public string action = "Update";
-        public Key keys { get; set; }
+        public List<Key> keys { get; set; }
         public List<Attribute> attributes { get; set; }
         public object headers { get; set; }
         public string correlationId { get; set; }
@@ -78,7 +78,15 @@ namespace readingresponses
             p.containermain = pobject.containermain;
             p.containerretry = pobject.containerretry;
             List<getmainmail> responses = File.ReadAllLines(@"C:\Users\Lenovo\Documents\emailvalidation_Processed.csv").Skip(1).Select(v => FromCsv(v)).ToList();
-
+            Dictionary<string, string> dict = new Dictionary<string, string>();
+            dict.Add("200", "EMAIL_VALID");
+            dict.Add("210", "DOMAIN_EXISTS");
+            dict.Add("220", "RETRY");
+            dict.Add("250", "EMAIL_EXISTS_BUT_SPAM");
+            dict.Add("260", "DOMAIN_EXISTS_BUT_SPAM");
+            dict.Add("270", "RETRY");
+            dict.Add("300", "EMAIL_NOT_VALID");
+            dict.Add("310", "DOMAIN_EXISTS_BUT_SPAM");
             foreach (var value in responses)
             {
                 value.id = value.VerifyEmailResponse.VerifyEmailResult.ServiceResult.Email.Complete;
@@ -86,18 +94,20 @@ namespace readingresponses
                 {
                     signal SignalObject = new signal();
                     Key keyobject = new Key();
+                    List<Key> keyslist = new List<Key>();
                     keyobject.value = value.id;
-                    SignalObject.keys = keyobject;
+                    keyslist.Add(keyobject);
+                    SignalObject.keys = keyslist;
                     List<Attribute> attributelist = new List<Attribute>();
                     Attribute attributeobjectnew = new Attribute();
                     Attribute attributeobjectold = new Attribute();
                     Guid g = Guid.NewGuid();
                     SignalObject.correlationId = g.ToString();
 
-                    attributeobjectnew.key = "StatusCode.new";
-                    attributeobjectnew.value = value.VerifyEmailResponse.VerifyEmailResult.ServiceStatus.StatusNbr.ToString();
-                    attributeobjectold.key = "StatusCode.old";
-                    attributeobjectold.value = "220";
+                    attributeobjectnew.key = "EmailMatchType.new";
+                    attributeobjectnew.value = dict[value.VerifyEmailResponse.VerifyEmailResult.ServiceStatus.StatusNbr.ToString()];
+                    attributeobjectold.key = "EmailMatchType.old";
+                    attributeobjectold.value = dict["220"];
                     attributelist.Add(attributeobjectnew);
                     attributelist.Add(attributeobjectold);
                     SignalObject.attributes = attributelist;
@@ -142,51 +152,7 @@ namespace readingresponses
                 sftp.Disconnect();
             }
         }
-        public class Authorization
-        {
-            public readonly string _tenantId;
-            public readonly string _clientId;
-            public readonly string _certificateThumbprint;
-           
-       
-            public Authorization(string tenantId, string clientId, string certificateThumbprint)
-            {
-                _tenantId = tenantId;
-                _clientId = clientId;
-                _certificateThumbprint = certificateThumbprint;
-                
-            }
-
-            public async Task<string> GetAccessTokenAsync(string url)
-            {
-                 var authContext = new AuthenticationContext($"https://login.microsoftonline.com/72f988bf-86f1-41af-91ab-2d7cd011db47/oauth2/token"); 
-
-                return (await authContext.AcquireTokenAsync(url, GetCertificate(_clientId, _certificateThumbprint))).AccessToken;
-            }
-
-            private ClientAssertionCertificate GetCertificate(string clientId, string thumbprint)
-            {
-                var token = new AzureServiceTokenProvider("RunAs=App;AppId=aa0c3919-10cc-41aa-b236-35329c72ce95;TenantId=72f988bf-86f1-41af-91ab-2d7cd011db47; CertificateThumbprint=624225424959582dc202a153b69aa7f85c90c57b;CertificateStoreLocation=CurrentUser");
-                token.GetAccessTokenAsync("https://activitystore-ppe.trafficmanager.net");
-                var certificate = GetCertificateFromStore(thumbprint) ;
-                return new ClientAssertionCertificate(clientId, certificate);
-            }
-
-            private static X509Certificate2 GetCertificateFromStore(string thumbprint)
-            {
-                var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
-
-                store.Open(OpenFlags.ReadOnly);
-
-                var certificates = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, false);
-
-                store.Close();
-
-                return certificates[0];
-            }
-        }
-
-
+        
         static getmainmail FromCsv(string csvLine)
         {
             string[] array = csvLine.Split(',');
